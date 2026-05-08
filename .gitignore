@@ -1,10 +1,32 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
+*.egg-info/
 build/
 dist/
 wheels/
-*.egg-info
+.eggs/
 
-# Virtual environments
-.venv
+# Virtual environment
+.venv/
+
+# Environment secrets — NEVER commit
+.env
+
+# Node / Hardhat
+node_modules/
+artifacts/
+cache/
+typechain-types/
+
+# Vector DB
+chroma_db/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/

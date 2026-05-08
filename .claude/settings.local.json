@@ -31,7 +31,9 @@
       "Read(//mnt/d/app/**)",
       "Bash(python -c ' *)",
       "Bash(python *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(git -C \"D:/app\" status --short)",
+      "Bash(uv sync *)"
     ]
   }
 }
