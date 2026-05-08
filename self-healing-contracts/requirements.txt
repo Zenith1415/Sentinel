@@ -1,0 +1,11 @@
+langchain
+langchain-anthropic
+langgraph
+chromadb
+web3
+redis
+fastapi
+uvicorn
+python-dotenv
+slither-analyzer
+pytest

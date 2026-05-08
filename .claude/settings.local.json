@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv add *)",
+      "Bash(New-Item -ItemType Directory -Force -Path self-healing-contracts/contracts/proxy, self-healing-contracts/contracts/interfaces, self-healing-contracts/agents, self-healing-contracts/graph, self-healing-contracts/core, self-healing-contracts/deploy, self-healing-contracts/api, self-healing-contracts/dashboard, self-healing-contracts/tests, self-healing-contracts/scripts)",
+      "Bash(Out-Null)",
+      "Bash(Write-Host \"Directories created\")",
+      "Bash(uv pip *)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(python -c \"import langchain, langgraph, chromadb, web3, redis; print\\('ALL IMPORTS OK'\\)\")",
+      "Bash(uv run *)",
+      "Bash(npx hardhat *)",
+      "Bash(npm pkg *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\app\\\\self-healing-contracts\" -Recurse)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(python -m pytest tests/test_phase5.py -v)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -m pytest tests/test_phase6.py -v)",
+      "Bash(python -m pytest tests/test_phase4.py::test_three_candidates_generated_in_parallel -v)",
+      "Bash(python -m pytest tests/test_phase4.py::test_three_candidates_generated_in_parallel tests/test_phase6.py -v)",
+      "Bash(python -m pytest tests/test_phase4.py::test_three_candidates_generated_in_parallel -v --tb=line)",
+      "Bash(python -m pytest tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py tests/test_phase4.py -v --tb=short)",
+      "Bash(python -m pytest tests/ -v)"
+    ]
+  }
+}
