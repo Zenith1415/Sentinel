@@ -8,4 +8,5 @@ dependencies = [
     "fakeredis>=2.35.1",
     "langchain-google-genai>=4.2.2",
     "langchain-mcp-adapters>=0.2.2",
+    "pytest-asyncio>=1.3.0",
 ]

@@ -22,7 +22,16 @@
       "Bash(python -m pytest tests/test_phase4.py::test_three_candidates_generated_in_parallel tests/test_phase6.py -v)",
       "Bash(python -m pytest tests/test_phase4.py::test_three_candidates_generated_in_parallel -v --tb=line)",
       "Bash(python -m pytest tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py tests/test_phase4.py -v --tb=short)",
-      "Bash(python -m pytest tests/ -v)"
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -m pytest tests/test_phase7.py -v)",
+      "Bash(python -m pytest tests/test_phase5.py tests/test_phase6.py tests/test_phase7.py -v --tb=short)",
+      "Bash(python -c \"import sse_starlette; print\\(sse_starlette.__version__\\)\")",
+      "Bash(python -c \"import httpx; print\\('httpx ok'\\)\")",
+      "Bash(python -c \"import fakeredis; print\\('fakeredis ok'\\)\")",
+      "Read(//mnt/d/app/**)",
+      "Bash(python -c ' *)",
+      "Bash(python *)",
+      "Bash(pip install *)"
     ]
   }
 }
