@@ -23,14 +23,34 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "models/gemini-embedding-001")
+_EMBED_DIM   = int(os.getenv("GEMINI_EMBED_DIM", "768"))
+_embedder_singleton = None
+
+
 def _embed(text: str) -> list[float]:
-    """Generate a 768-dim embedding via Google text-embedding-004."""
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-    embedder = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=os.environ["GOOGLE_API_KEY"],
-    )
-    return embedder.embed_query(text)
+    """Generate a 768-dim embedding via Google's Gemini embedding model.
+
+    Uses gemini-embedding-001 by default (text-embedding-004 was retired on the
+    v1beta endpoint). gemini-embedding-001 defaults to 3072 dims, so we force
+    output_dimensionality=768 to match the Atlas vector_index schema.
+    """
+    global _embedder_singleton
+    if _embedder_singleton is None:
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        kwargs = {
+            "model":          _EMBED_MODEL,
+            "google_api_key": os.environ["GOOGLE_API_KEY"],
+        }
+        # output_dimensionality is supported on newer langchain-google-genai
+        # releases; fall back gracefully if the kwarg is unknown.
+        try:
+            _embedder_singleton = GoogleGenerativeAIEmbeddings(
+                **kwargs, output_dimensionality=_EMBED_DIM,
+            )
+        except TypeError:
+            _embedder_singleton = GoogleGenerativeAIEmbeddings(**kwargs)
+    return _embedder_singleton.embed_query(text)
 
 
 class MongoVectorStore:

@@ -52,7 +52,9 @@
       "WebFetch(domain:backboard-docs.docsalot.dev)",
       "WebFetch(domain:app.backboard.io)",
       "Bash(gh api *)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(npm run *)",
+      "Bash(npx eslint *)"
     ]
   }
 }

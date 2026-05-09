@@ -22,12 +22,28 @@ from typing import Any, AsyncIterator
 from dotenv import load_dotenv
 load_dotenv()
 
-# LangSmith tracing — enabled when LANGCHAIN_API_KEY + LANGCHAIN_TRACING_V2 are set.
+# LangSmith tracing — enabled when an API key + tracing flag are set.
+# Accepts both the legacy LANGCHAIN_* names and the newer LANGSMITH_* names so
+# the .env conforms to either generation of the LangSmith quickstart docs.
 # We only disable if the package isn't installed; auth errors are caught per-request.
 _ls_client = None
 _LANGSMITH_ENABLED = False
-_langsmith_api_key = os.getenv("LANGCHAIN_API_KEY", "").strip()
-if _langsmith_api_key and os.getenv("LANGCHAIN_TRACING_V2", "").strip().lower() == "true":
+_langsmith_api_key = (
+    os.getenv("LANGSMITH_API_KEY", "").strip()
+    or os.getenv("LANGCHAIN_API_KEY", "").strip()
+)
+_tracing_flag = (
+    os.getenv("LANGSMITH_TRACING", "").strip().lower()
+    or os.getenv("LANGCHAIN_TRACING_V2", "").strip().lower()
+)
+if _langsmith_api_key and _tracing_flag == "true":
+    # Mirror values into the names LangChain's auto-tracer reads, so wrapping
+    # any LangChain/LangGraph runnable produces traces without further config.
+    os.environ.setdefault("LANGCHAIN_API_KEY", _langsmith_api_key)
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    _project = os.getenv("LANGSMITH_PROJECT", "") or os.getenv("LANGCHAIN_PROJECT", "")
+    if _project:
+        os.environ.setdefault("LANGCHAIN_PROJECT", _project)
     try:
         from langsmith import Client as _LangSmithClient
         _ls_client = _LangSmithClient(api_key=_langsmith_api_key)
