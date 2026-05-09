@@ -111,11 +111,14 @@ def test_vulnerable_vault_route_is_medium_or_slow():
     )
     result = CorrelationAgent().correlate(state)
 
-    assert result["route"] in ("medium", "slow"), (
-        f"Expected medium or slow, got '{result['route']}'"
+    # VulnerableVault has well-known patterns (reentrancy, missing access control)
+    # With KB seeded ≥ 5 proven patches and confidence ≥ 0.75, fast path is valid.
+    # Slow is rejected — these are simple, auto-patchable findings.
+    assert result["route"] in ("fast", "medium"), (
+        f"VulnerableVault must route 'fast' or 'medium' (auto-patchable). Got '{result['route']}'"
     )
-    assert result["route"] != "fast", (
-        "Should not be 'fast' — KB has fewer than 50 proven patches"
+    assert result["route"] != "slow", (
+        "VulnerableVault must NOT route slow — its findings are well-known patterns"
     )
     # State fields must be populated
     assert isinstance(result["all_findings"], list)

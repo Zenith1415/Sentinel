@@ -7,9 +7,9 @@ import json
 import os
 import re
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from core.llm import get_llm
 from graph.state import HealingState
 
 _SYSTEM = """\
@@ -42,15 +42,11 @@ class LLMSemanticAgent:
     methodology = "llm"
 
     def __init__(self) -> None:
-        self._llm: ChatGoogleGenerativeAI | None = None
+        self._llm = None
 
-    def _get_llm(self) -> ChatGoogleGenerativeAI:
+    def _get_llm(self):
         if self._llm is None:
-            self._llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash",
-                google_api_key=os.environ["GOOGLE_API_KEY"],
-                max_output_tokens=4096,
-            )
+            self._llm = get_llm(max_tokens=4096, agent_role="semantic")
         return self._llm
 
     def run(self, contract_source: str, state: HealingState) -> list[dict]:
@@ -72,7 +68,7 @@ class LLMSemanticAgent:
 
         return [self._normalize(f) for f in parsed if isinstance(f, dict)]
 
-    def _call(self, llm: ChatGoogleGenerativeAI, source: str) -> str:
+    def _call(self, llm, source: str) -> str:
         resp = llm.invoke([
             SystemMessage(content=_SYSTEM),
             HumanMessage(content=f"```solidity\n{source}\n```"),

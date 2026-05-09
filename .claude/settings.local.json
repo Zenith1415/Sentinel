@@ -33,7 +33,26 @@
       "Bash(python *)",
       "Bash(pip install *)",
       "Bash(git -C \"D:/app\" status --short)",
-      "Bash(uv sync *)"
+      "Bash(uv sync *)",
+      "Bash(Get-ChildItem *)",
+      "Bash(ls *)",
+      "Bash(powershell *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('bytecode length:', len\\(d.get\\('bytecode',''\\)\\)\\); print\\('has deployedBytecode:', bool\\(d.get\\('deployedBytecode'\\)\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('bytecode length:', len\\(d.get\\('bytecode',''\\)\\)\\); abi=d.get\\('abi',[]\\); ctors=[x for x in abi if x.get\\('type'\\)=='constructor']; print\\('constructor inputs:', ctors[0].get\\('inputs'\\) if ctors else 'none'\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); abi=d.get\\('abi',[]\\); fns=[x for x in abi if x.get\\('type'\\)=='function']; [print\\(f['name'], ':', [i['name'] for i in f.get\\('inputs',[]\\)]\\) for f in fns]\")",
+      "Bash(python3 *)",
+      "Bash(.venv/Scripts/pip install *)",
+      "PowerShell(uv add *)",
+      "Bash(where myth *)",
+      "Bash(where mythril *)",
+      "PowerShell(uv run *)",
+      "WebFetch(domain:backboard.io)",
+      "WebSearch",
+      "WebFetch(domain:docs.backboard.io)",
+      "WebFetch(domain:backboard-docs.docsalot.dev)",
+      "WebFetch(domain:app.backboard.io)",
+      "Bash(gh api *)",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }

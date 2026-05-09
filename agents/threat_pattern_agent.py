@@ -21,6 +21,10 @@ class ThreatPatternAgent:
     methodology = "pattern"
     CHUNK_LINES = 25
     TOP_K = 5
+    # Only emit findings with similarity confidence >= this threshold.
+    # Below this is just KB noise — every contract matches generic patterns
+    # at ~15-30%, but those aren't real findings, just nearest-neighbour artifacts.
+    MIN_CONFIDENCE = 0.55
 
     def __init__(self, chroma_path: str | None = None) -> None:
         path = chroma_path or os.getenv("CHROMA_PATH", "./chroma_db")
@@ -48,6 +52,12 @@ class ThreatPatternAgent:
                 # ChromaDB distance: 0=identical, ~2=orthogonal (cosine space)
                 raw_score = float(match.get("score", 1.0))
                 confidence = round(max(0.0, min(1.0, 1.0 - raw_score / 2.0)), 3)
+
+                # Discard low-similarity matches: every contract matches generic
+                # KB entries at 15-30%, but those are nearest-neighbour artifacts,
+                # not actionable findings.
+                if confidence < self.MIN_CONFIDENCE:
+                    continue
 
                 sev_raw = match.get("severity", "medium")
                 severity = _SEVERITY_MAP.get(sev_raw.lower(), "Medium")

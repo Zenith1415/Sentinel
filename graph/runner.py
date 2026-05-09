@@ -67,6 +67,12 @@ def run_healing_pipeline(
         "error":                "",
     }
 
+    import os
+    from datetime import datetime
+    os.environ["LANGCHAIN_PROJECT"] = (
+        f"self-healing-{datetime.now().strftime('%H:%M')}"
+    )
+
     logger.info("Starting healing pipeline %s", initial_state["pipeline_id"])
     result = graph.invoke(initial_state)
     logger.info(

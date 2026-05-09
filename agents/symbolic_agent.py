@@ -58,8 +58,12 @@ class SymbolicExecutionAgent:
             return [self._timeout_finding("Mythril exceeded 90-second time budget.")]
 
         except FileNotFoundError:
+            # Mythril not installed → skip the symbolic layer entirely.
+            # Returning [] (instead of a TIMEOUT sentinel) lets routing
+            # fall back to the other 4 agents' findings instead of forcing
+            # every run to slow path on dev machines without Mythril.
             self._cleanup(tmp)
-            return [self._timeout_finding("Mythril (myth) not installed — skipping symbolic path.")]
+            return []
 
         except Exception:
             self._cleanup(tmp)

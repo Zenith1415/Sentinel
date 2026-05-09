@@ -23,9 +23,9 @@ import subprocess
 import tempfile
 import uuid
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from core.llm import get_llm
 from graph.state import HealingState
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class MasterPatchAgent:
 
     def __init__(self, chroma_path: str | None = None) -> None:
         self._chroma_path = chroma_path or os.getenv("CHROMA_PATH", "./chroma_db")
-        self._llm: ChatGoogleGenerativeAI | None = None
+        self._llm = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -68,16 +68,41 @@ class MasterPatchAgent:
             loop = asyncio.get_event_loop()
             candidates = loop.run_until_complete(self._generate_all(s))
 
-        # Pre-validate each candidate
+        # Pre-validate each candidate that succeeded
         validated: list[dict] = []
+        failures: list[str] = []
         for c in candidates:
-            if isinstance(c, Exception) or c is None:
+            if isinstance(c, Exception):
+                failures.append(f"{type(c).__name__}: {c}")
+                continue
+            if c is None:
+                failures.append("LLM returned no parseable JSON")
                 continue
             c = self._prevalidate(c, s)
             validated.append(c)
 
+        # If every candidate failed, surface a placeholder so the pipeline
+        # can progress to validate (which will fail → retry → slow path)
+        # rather than stalling silently with no candidates.
+        if not validated:
+            logger.warning(
+                "Patch agent produced 0 successful candidates. Failures: %s",
+                "; ".join(failures) or "unknown",
+            )
+            validated.append({
+                "id":                  str(uuid.uuid4()),
+                "strategy":            "fallback_no_patch",
+                "patch_source":        s.get("contract_source", ""),  # original = unchanged
+                "explanation":         f"Patch generation failed: {'; '.join(failures) or 'all candidates failed'}",
+                "vuln_types_addressed": [],
+                "flagged_for_review":  True,
+                "flag_reasons":        ["patch_generation_failed"] + failures[:3],
+                "new_vulns":           [],
+            })
+
         s["candidate_patches"] = validated
-        print("PHASE 4 COMPLETE — 3 candidates generated and pre-checked")
+        print(f"PHASE 4 COMPLETE — {len(validated)} candidate(s) generated and pre-checked"
+              + (f" (with {len(failures)} failure(s))" if failures else ""))
         return s
 
     # ------------------------------------------------------------------
@@ -279,18 +304,20 @@ class MasterPatchAgent:
     # LLM helpers
     # ------------------------------------------------------------------
 
-    def _get_llm(self) -> ChatGoogleGenerativeAI:
+    def _get_llm(self):
         if self._llm is None:
-            self._llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash",
-                google_api_key=os.environ["GOOGLE_API_KEY"],
-                max_output_tokens=8192,
-            )
+            self._llm = get_llm(max_tokens=8192, agent_role="patch", json_mode=True)
         return self._llm
 
     async def _call_llm(self, messages: list) -> str:
         llm = self._get_llm()
-        resp = await llm.ainvoke(messages)
+        # Hard cap LLM calls at 60 seconds — past this we treat the candidate as
+        # failed rather than stalling the whole pipeline at the patch layer.
+        try:
+            resp = await asyncio.wait_for(llm.ainvoke(messages), timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.warning("LLM call timed out after 60s — treating candidate as failed")
+            raise
         return resp.content.strip()
 
     def _parse_json(self, raw: str) -> dict | None:

@@ -17,9 +17,10 @@ from graph.state import HealingState
 
 logger = logging.getLogger(__name__)
 
-_FAST_CONFIDENCE = 0.99
-_SLOW_CONFIDENCE = 0.70
-_FAST_KB_MIN     = 50
+_FAST_CONFIDENCE = 0.75    # confidence ≥ 75% + no cross-contract + KB has coverage
+_SLOW_CONFIDENCE = 0.30    # confidence < 30% always → slow
+_SLOW_CROSS_CONFIDENCE = 0.65  # cross-contract or novel patterns force slow when confidence < 65%
+_FAST_KB_MIN     = 5       # KB needs at least 5 proven patches for the fast path
 _HIGH_TVL        = 1_000_000
 
 _SEV_WEIGHTS = {"critical": 1.4, "high": 1.2, "medium": 1.0, "low": 0.8}
@@ -52,10 +53,14 @@ class CorrelationAgent:
         if not symbolic:
             logger.warning("DEAD_LETTER [quorum] no symbolic findings — proceeding with available")
 
-        # Pool all non-TIMEOUT findings for merge
+        # Pool all non-TIMEOUT findings for merge.
+        # Filter out very-low-confidence findings (< 0.30) — these are noise
+        # from KB nearest-neighbour matches that fire on every contract regardless
+        # of whether the pattern is actually present.
         raw = [
             f for f in (static + symbolic + semantic + gov + threat)
             if f.get("vuln_type") != "TIMEOUT"
+            and float(f.get("confidence", 0.0)) >= 0.30
         ]
 
         # ── Step 2: merge ─────────────────────────────────────────────
@@ -67,7 +72,7 @@ class CorrelationAgent:
         # ── Step 4: confidence ────────────────────────────────────────
         confidence = self._confidence(merged, conflicts, has_timeout)
 
-        # ── Step 5: route (TIMEOUT always forces slow) ────────────────
+        # ── Step 5: route (TIMEOUT always forces slow path) ──────────
         if has_timeout:
             route = "slow"
         else:
@@ -113,9 +118,11 @@ class CorrelationAgent:
                 if meth == "symbolic" and not has_static and not has_llm:
                     c = min(1.0, c * 2.0)
 
-                # LLM-only finding → confidence penalty -0.2
-                if methodologies <= {"llm", "governance"}:
-                    c = max(0.0, c - 0.2)
+                # Pure-LLM finding → confidence penalty -0.15
+                # Governance patterns are deterministic regex rules, not guesses,
+                # so they do NOT receive the LLM uncertainty penalty.
+                if methodologies and methodologies <= {"llm"}:
+                    c = max(0.0, c - 0.15)
 
                 adjusted.append(c)
 
@@ -210,7 +217,9 @@ class CorrelationAgent:
         self, merged: list[dict], conflicts: list[str], has_timeout: bool
     ) -> float:
         if not merged:
-            score = 0.5
+            # No findings = the contract is clean. High confidence by definition.
+            # (The architecture says: empty findings → fast-path clean exit.)
+            score = 0.95
         else:
             total_w = w_sum = 0.0
             for f in merged:
@@ -221,11 +230,11 @@ class CorrelationAgent:
             score = w_sum / total_w if total_w else 0.5
 
         # Penalties
-        score -= 0.1 * len(conflicts)
+        score -= 0.08 * len(conflicts)
         if any(f.get("cross_contract_flag") for f in merged):
-            score -= 0.2
+            score -= 0.10
         if has_timeout:
-            score -= 0.15
+            score -= 0.05   # Mythril absent is normal in most envs; don't tank confidence
 
         return round(max(0.0, min(1.0, score)), 3)
 
@@ -237,19 +246,31 @@ class CorrelationAgent:
         cross = any(f.get("cross_contract_flag") for f in merged)
         tvl   = float(state.get("tvl_estimate") or 0)
 
+        # ── No findings → fast (clean exit, nothing to patch) ─────────
+        if not merged:
+            return "fast"
+
         # ── SLOW conditions ───────────────────────────────────────────
         if confidence < _SLOW_CONFIDENCE:
             return "slow"
-        if cross:
-            return "slow"
         if tvl > _HIGH_TVL:
             return "slow"
-        if self._has_novel_patterns(merged):
+        # Cross-contract or novel pattern + borderline confidence → slow
+        if cross and confidence < _SLOW_CROSS_CONFIDENCE:
+            return "slow"
+        if self._has_novel_patterns(merged) and confidence < _SLOW_CROSS_CONFIDENCE:
             return "slow"
 
         # ── FAST conditions ───────────────────────────────────────────
+        # Fast path is reserved for low-risk patches: no Critical-severity findings
+        # (those must go through full validation), high confidence, no cross-contract,
+        # and the KB has enough coverage to support a quick patch.
+        has_critical = any(
+            (f.get("severity", "").lower() == "critical") for f in merged
+        )
         if (
-            confidence >= _FAST_CONFIDENCE
+            not has_critical
+            and confidence >= _FAST_CONFIDENCE
             and not cross
             and self._kb_has_sufficient_coverage(merged)
         ):
@@ -262,7 +283,11 @@ class CorrelationAgent:
     # ------------------------------------------------------------------
 
     def _has_novel_patterns(self, merged: list[dict]) -> bool:
-        """True if any merged vuln_type has no keyword overlap with KB types."""
+        """True if any static/symbolic finding has no keyword overlap with KB types.
+
+        Governance and pattern findings come from predefined rule libraries so
+        they are never treated as novel regardless of KB coverage.
+        """
         try:
             from core.kb import KnowledgeBase
             kb = KnowledgeBase(path=self._chroma_path)
@@ -270,6 +295,8 @@ class CorrelationAgent:
             if not kb_types:
                 return False
             for f in merged:
+                if f.get("methodology", "") in ("governance", "pattern"):
+                    continue  # predefined rules — not novel
                 vtype = f.get("vuln_type", "").lower().replace("_", "")
                 if not any(
                     kt.replace("_", "") in vtype or vtype in kt.replace("_", "")

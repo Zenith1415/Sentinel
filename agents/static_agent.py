@@ -44,27 +44,60 @@ class StaticAnalysisAgent:
         findings: list[dict] = []
         lines = source.splitlines()
 
-        # [VULN-1] Reentrancy: .call{value:} before state update
+        # [VULN-1] Reentrancy: .call{value:} before state update — detect CEI violation
+        # Scan ONLY within the enclosing function (not the whole file) and skip
+        # functions that already use nonReentrant or follow CEI (state cleared first).
         for i, line in enumerate(lines):
             if not (re.search(r'\.call\{value:', line) or re.search(r'\.call\.value\(', line)):
                 continue
-            # Scan lines AFTER the call for a mapping decrement
-            after = "\n".join(lines[i + 1:])
-            if re.search(r'\bbalances\b.*?[-]=|\bbalances\b.*?=\s*0\b', after):
-                fn = self._enclosing_fn(lines, i)
-                findings.append(self._make(
-                    vuln_type="Reentrancy",
-                    severity="Critical",
-                    affected_function=fn,
-                    line_range=[i + 1, min(i + 6, len(lines))],
-                    confidence=0.95,
-                    fix_recommendation=_FIX_HINTS["reentrancy"],
-                    evidence=(
-                        f"Line {i + 1}: `{line.strip()}` — state update follows "
-                        f"external call, enabling reentrancy."
-                    ),
-                    cross_contract_flag=True,
-                ))
+
+            # Find the enclosing function's body bounds (between matching braces)
+            fn_start = i
+            for j in range(i, -1, -1):
+                if re.search(r'function\s+\w+', lines[j]):
+                    fn_start = j
+                    break
+            fn_end = self._find_fn_end(lines, fn_start)
+
+            fn_body_before = "\n".join(lines[fn_start:i])
+            fn_body_after  = "\n".join(lines[i + 1:fn_end + 1])
+
+            # ✅ CEI applied: state cleared BEFORE the call → not vulnerable
+            cleared_before = bool(
+                re.search(r'\bbalances\b\s*\[[^\]]+\]\s*[-]=', fn_body_before)
+                or re.search(r'\bbalances\b\s*\[[^\]]+\]\s*=\s*0\b', fn_body_before)
+            )
+            if cleared_before:
+                continue
+
+            # ✅ nonReentrant guard on this function → not vulnerable
+            fn_signature = "\n".join(lines[fn_start: min(fn_start + 3, len(lines))])
+            if re.search(r'\bnonReentrant\b', fn_signature):
+                continue
+
+            # 🔴 State update AFTER the call → reentrancy
+            if not re.search(r'\bbalances\b\s*\[[^\]]+\]\s*[-]=|\bbalances\b\s*\[[^\]]+\]\s*=\s*0\b', fn_body_after):
+                continue
+
+            fn_name = self._enclosing_fn(lines, i)
+            # cross_contract_flag only when calling a stored external address,
+            # not msg.sender or address(this) which are always intra-contract
+            is_cross = bool(re.search(r'\.call\{value:', line)) and not bool(
+                re.search(r'msg\.sender\.call|address\(this\)\.call', line)
+            )
+            findings.append(self._make(
+                vuln_type="Reentrancy",
+                severity="Critical",
+                affected_function=fn_name,
+                line_range=[i + 1, min(i + 6, len(lines))],
+                confidence=0.95,
+                fix_recommendation=_FIX_HINTS["reentrancy"],
+                evidence=(
+                    f"Line {i + 1}: `{line.strip()}` — state update follows "
+                    f"external call, enabling reentrancy."
+                ),
+                cross_contract_flag=is_cross,
+            ))
 
         # [VULN-2] Missing access control on setter functions
         for i, line in enumerate(lines):
@@ -86,6 +119,66 @@ class StaticAnalysisAgent:
                 fix_recommendation=_FIX_HINTS["access-control"],
                 evidence=f"Line {i + 1}: `{line.strip()}` — no access control modifier detected.",
                 cross_contract_flag=False,
+            ))
+
+        # [VULN-3] delegatecall — cross-contract storage collision risk
+        for i, line in enumerate(lines):
+            if not re.search(r'\.delegatecall\s*\(', line):
+                continue
+            fn = self._enclosing_fn(lines, i)
+            findings.append(self._make(
+                vuln_type="DangerousDelegatecall",
+                severity="Critical",
+                affected_function=fn,
+                line_range=[i + 1, min(i + 6, len(lines))],
+                confidence=0.30,   # auto-fixing requires storage-layout coordination
+                fix_recommendation=(
+                    "delegatecall shares the caller's storage layout — verify storage "
+                    "slots match across contracts and consider EIP-1967 namespacing."
+                ),
+                evidence=f"Line {i + 1}: `{line.strip()}` — delegatecall to user-controlled address.",
+                cross_contract_flag=True,
+            ))
+
+        # [VULN-4] selfdestruct — irreversible, governance/operational concern
+        for i, line in enumerate(lines):
+            if not re.search(r'\bselfdestruct\s*\(', line):
+                continue
+            fn = self._enclosing_fn(lines, i)
+            findings.append(self._make(
+                vuln_type="SelfdestructPresent",
+                severity="High",
+                affected_function=fn,
+                line_range=[i + 1, min(i + 4, len(lines))],
+                confidence=0.35,
+                fix_recommendation=_FIX_HINTS["suicidal"],
+                evidence=f"Line {i + 1}: `{line.strip()}` — selfdestruct kills the implementation contract.",
+                cross_contract_flag=False,
+            ))
+
+        # [VULN-5] Multiple contracts in one file → architecture complexity signal
+        contract_decls = re.findall(r'^\s*contract\s+(\w+)', source, re.MULTILINE)
+        if len(contract_decls) >= 3:
+            # Multi-contract architecture — every reentrancy/external-call finding
+            # should be flagged as cross-contract regardless of the specific call site,
+            # because routing decisions depend on contract-graph complexity.
+            for f in findings:
+                if f.get("vuln_type") in ("Reentrancy", "DangerousDelegatecall"):
+                    f["cross_contract_flag"] = True
+            # Also emit an explicit complexity finding
+            findings.append(self._make(
+                vuln_type="MultiContractArchitecture",
+                severity="Medium",
+                affected_function="<file-level>",
+                line_range=[1, len(lines)],
+                confidence=0.40,
+                fix_recommendation=(
+                    "File defines "
+                    f"{len(contract_decls)} contracts: {', '.join(contract_decls[:6])}. "
+                    "Cross-contract behaviour cannot be patched in isolation."
+                ),
+                evidence=f"{len(contract_decls)} contract declarations in single source file.",
+                cross_contract_flag=True,
             ))
 
         return findings
@@ -171,6 +264,21 @@ class StaticAnalysisAgent:
             if m:
                 return m.group(1)
         return "unknown"
+
+    def _find_fn_end(self, lines: list[str], start: int) -> int:
+        """Return the line index of the closing brace of the function starting at `start`."""
+        depth = 0
+        seen_open = False
+        for i in range(start, len(lines)):
+            for ch in lines[i]:
+                if ch == "{":
+                    depth += 1
+                    seen_open = True
+                elif ch == "}":
+                    depth -= 1
+                    if seen_open and depth == 0:
+                        return i
+        return len(lines) - 1
 
     def _fmt(self, check: str) -> str:
         return "".join(w.capitalize() for w in re.split(r'[-_]', check))

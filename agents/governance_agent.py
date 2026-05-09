@@ -7,9 +7,9 @@ import json
 import os
 import re
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from core.llm import get_llm
 from graph.state import HealingState
 
 _SYSTEM = """\
@@ -32,7 +32,9 @@ _VALID_SEVERITIES = {"Critical", "High", "Medium", "Low"}
 _PATTERNS = [
     {
         "regex": r"function\s+initialize\s*\(",
-        "absence": r"\binitializer\b",
+        # Accept common initializer guards: OZ `initializer`, custom `onlyInitializing`,
+        # or a manual `_initialized` / `initialized` boolean guard.
+        "absence": r"\binitializer\b|\bonlyInitializing\b|\b_?initialized\b",
         "vuln_type": "UnprotectedInitializer",
         "severity": "Critical",
         "confidence": 0.85,
@@ -75,15 +77,11 @@ class GovernanceMonitorAgent:
     methodology = "governance"
 
     def __init__(self) -> None:
-        self._llm: ChatGoogleGenerativeAI | None = None
+        self._llm = None
 
-    def _get_llm(self) -> ChatGoogleGenerativeAI:
+    def _get_llm(self):
         if self._llm is None:
-            self._llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash",
-                google_api_key=os.environ["GOOGLE_API_KEY"],
-                max_output_tokens=2048,
-            )
+            self._llm = get_llm(max_tokens=2048, agent_role="governance")
         return self._llm
 
     def run(self, contract_source: str, state: HealingState) -> list[dict]:
@@ -104,10 +102,16 @@ class GovernanceMonitorAgent:
             for i, line in enumerate(lines):
                 if not re.search(pat["regex"], line):
                     continue
-                # Inspect signature only (≤2 lines) with comments stripped so
-                # body comments like "// missing onlyOwner" don't hide the finding
-                sig = "\n".join(lines[max(0, i - 1): i + 2])
-                sig_clean = re.sub(r"//[^\n]*", "", sig)
+                # Inspect the entire function signature (until the opening brace,
+                # capped at 10 lines for malformed code). Multi-line signatures
+                # are common — modifiers like `onlyInitializing` may live on the
+                # closing line, not the opening one.
+                sig_lines = []
+                for j in range(max(0, i - 1), min(i + 10, len(lines))):
+                    sig_lines.append(lines[j])
+                    if "{" in lines[j] and j > i:
+                        break
+                sig_clean = re.sub(r"//[^\n]*", "", "\n".join(sig_lines))
                 if re.search(pat["absence"], sig_clean):
                     continue  # protection present — no finding
                 fn_m = re.search(r"function\s+(\w+)", line)

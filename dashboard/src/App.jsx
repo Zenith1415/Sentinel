@@ -5,6 +5,12 @@ import DiffViewer from './components/DiffViewer.jsx'
 import GateResults from './components/GateResults.jsx'
 import DeployStatus from './components/DeployStatus.jsx'
 import KbHealth from './components/KbHealth.jsx'
+import TraceViewer from './components/TraceViewer.jsx'
+import StatsBar from './components/StatsBar.jsx'
+import RLLearningCurve from './components/RLLearningCurve.jsx'
+import ScopeBoundaryAlert from './components/ScopeBoundaryAlert.jsx'
+import HumanReview from './components/HumanReview.jsx'
+import CliConsole from './components/CliConsole.jsx'
 
 const API = ''  // proxied by Vite dev server
 
@@ -37,11 +43,43 @@ contract VulnerableVault {
 }
 `
 
+// Paste of the full UnpatchableVault source — loaded via fetch for brevity
+const UNPATCHABLE_PLACEHOLDER = `// Loading UnpatchableVault.sol…
+// This contract has 6 vulnerability classes designed to defeat auto-patching.
+// The pipeline will escalate to SLOW PATH (human review required).`
+
+const PRESETS = [
+  {
+    label: '⚡ VulnerableVault',
+    description: 'Simple reentrancy + missing access control. Pipeline heals this autonomously.',
+    source: VAULT_EXAMPLE,
+    badge: 'AUTO-PATCHABLE',
+    badgeColor: 'var(--yellow)',
+  },
+  {
+    label: '💀 UnpatchableVault',
+    description: '6 vulnerability classes: cross-contract reentrancy, oracle manipulation, storage collision, flash loan, selfdestruct governance. Pipeline escalates to SLOW PATH.',
+    source: null,
+    file: '/UnpatchableVault.sol',
+    badge: 'SLOW PATH',
+    badgeColor: 'var(--red)',
+  },
+  {
+    label: '✅ SafeVault',
+    description: 'CEI pattern, nonReentrant, two-step ownership, safe oracle, multi-sig governance, no selfdestruct, no delegatecall. Pipeline finds no critical vulnerabilities.',
+    source: null,
+    file: '/SafeVault.sol',
+    badge: 'SECURE',
+    badgeColor: 'var(--green)',
+  },
+]
+
 export default function App() {
   // Form state
-  const [source, setSource]   = useState(VAULT_EXAMPLE)
-  const [address, setAddress] = useState('0x' + '1'.repeat(40))
-  const [tvl, setTvl]         = useState('0')
+  const [source,     setSource]     = useState(VAULT_EXAMPLE)
+  const [address,    setAddress]    = useState('0x' + '1'.repeat(40))
+  const [tvl,        setTvl]        = useState('0')
+  const [presetIdx,  setPresetIdx]  = useState(0)
 
   // Pipeline state
   const [pipelineId,     setPipelineId]     = useState(null)
@@ -53,6 +91,22 @@ export default function App() {
   const [sseLog,         setSseLog]         = useState([])
 
   const esRef = useRef(null)
+
+  // ── Load a preset contract ───────────────────────────────────────────
+  async function loadPreset(idx) {
+    const preset = PRESETS[idx]
+    setPresetIdx(idx)
+    if (preset.source) {
+      setSource(preset.source)
+    } else if (preset.file) {
+      try {
+        const r = await fetch(preset.file)
+        setSource(r.ok ? await r.text() : UNPATCHABLE_PLACEHOLDER)
+      } catch {
+        setSource(UNPATCHABLE_PLACEHOLDER)
+      }
+    }
+  }
 
   // ── Launch pipeline ──────────────────────────────────────────────────
   async function heal() {
@@ -90,7 +144,8 @@ export default function App() {
       const node = event.node
       const state = event.state || {}
 
-      setSseLog(prev => [...prev, { node, ts: Date.now() }])
+      // Store the full event (with state) so the CLI Console can render rich details
+      setSseLog(prev => [...prev, { node, state, anomalies: event.anomalies, error: event.error, ts: Date.now() }])
 
       if (node === '__done__') {
         setPipelineStatus('complete')
@@ -162,11 +217,18 @@ export default function App() {
     setPipelineStatus('rollback_initiated')
   }
 
+  // ── Inject anomaly (demo money shot) ────────────────────────────────
+  async function injectAnomaly() {
+    setPipelineStatus('monitoring')
+    startSSE(pipelineId)   // re-subscribe BEFORE posting so we catch the rollback event
+    await fetch(`${API}/demo/inject-anomaly/${pipelineId}`, { method: 'POST' })
+  }
+
   // ── Status dot ───────────────────────────────────────────────────────
   const statusColor = {
     idle: 'grey', starting: 'yellow', running: 'green',
     complete: 'green', error: 'red', paused: 'yellow',
-    rollback_initiated: 'yellow', rolled_back: 'red',
+    monitoring: 'yellow', rollback_initiated: 'yellow', rolled_back: 'red',
   }[pipelineStatus] || 'grey'
 
   return (
@@ -182,8 +244,49 @@ export default function App() {
         </div>
       </header>
 
+      {/* Stats bar — top, auto-refresh */}
+      <StatsBar />
+
       {/* Launch bar */}
       <div className="launch-bar">
+        {/* Preset selector */}
+        <div className="field" style={{ flex: '0 0 auto' }}>
+          <label>Contract Preset</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {PRESETS.map((p, i) => (
+              <button
+                key={i}
+                className="btn"
+                style={{
+                  fontSize: '.72rem',
+                  padding: '3px 10px',
+                  background: presetIdx === i ? p.badgeColor : 'var(--bg-panel)',
+                  color: presetIdx === i ? '#000' : 'var(--text-muted)',
+                  border: `1px solid ${presetIdx === i ? p.badgeColor : 'var(--border)'}`,
+                  fontWeight: presetIdx === i ? 700 : 400,
+                }}
+                onClick={() => loadPreset(i)}
+                title={p.description}
+              >
+                {p.label}
+                {p.badge && (
+                  <span style={{
+                    marginLeft: 5,
+                    fontSize: '.58rem',
+                    padding: '1px 4px',
+                    borderRadius: 4,
+                    background: presetIdx === i ? 'rgba(0,0,0,0.2)' : p.badgeColor,
+                    color: presetIdx === i ? '#000' : '#000',
+                    fontWeight: 700,
+                    verticalAlign: 'middle',
+                  }}>
+                    {p.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="field">
           <label>Contract Source (Solidity)</label>
           <textarea value={source} onChange={e => setSource(e.target.value)} />
@@ -199,6 +302,15 @@ export default function App() {
         <button className="btn" onClick={heal} disabled={pipelineStatus === 'running' || pipelineStatus === 'starting'}>
           {pipelineStatus === 'running' ? '⟳ Healing…' : '▶ Heal'}
         </button>
+        {pipelineStatus === 'complete' && healingState.deployed && (
+          <button
+            className="btn"
+            style={{ background: 'var(--yellow)', color: '#000', border: '1px solid #a07010' }}
+            onClick={injectAnomaly}
+          >
+            ⚡ Inject Anomaly
+          </button>
+        )}
       </div>
 
       {/* Main grid */}
@@ -212,6 +324,11 @@ export default function App() {
             pipelineId={pipelineId}
             onPause={onPause}
             onRollback={onRollback}
+            onLoadHistory={(row) => {
+              setHealingState({ ...healingState, ...row })
+              setPipelineId(row.pipeline_id)
+              setPipelineStatus(row.healed ? 'complete' : 'error')
+            }}
           />
           <GateResults
             gateResults={healingState.gate_results || {}}
@@ -226,29 +343,38 @@ export default function App() {
 
         {/* Right column */}
         <div className="right-col">
+          <ScopeBoundaryAlert pipelineId={pipelineId} pipelineStatus={pipelineStatus} />
+          <HumanReview
+            pipelineId={pipelineId}
+            pipelineStatus={pipelineStatus}
+            healingState={healingState}
+            originalSource={source}
+            onDeployed={(result) => {
+              setPipelineStatus('complete')
+              setHealingState(prev => ({
+                ...prev,
+                healed: true,
+                deployed: true,
+                tx_hash: result.tx_hash,
+                route: 'manual',
+                selected_patch: prev.selected_patch,
+              }))
+            }}
+          />
+          <RLLearningCurve />
+          <TraceViewer pipelineId={pipelineId} pipelineStatus={pipelineStatus} />
           <FindingsTable findings={healingState.all_findings || []} />
           <DiffViewer
             originalSource={source}
             candidates={healingState.candidate_patches || []}
           />
 
-          {/* SSE event log */}
-          <div className="panel" style={{ flex: '0 0 auto' }}>
-            <div className="panel-header">
-              <h2>Event Log</h2>
-              <span className="tag">{sseLog.length} events</span>
-            </div>
-            <div style={{ maxHeight: 120, overflowY: 'auto', fontFamily: 'monospace', fontSize: '.75rem' }}>
-              {sseLog.length === 0
-                ? <span className="empty">Awaiting SSE events…</span>
-                : sseLog.map((e, i) => (
-                    <div key={i} style={{ color: e.node.startsWith('_') ? 'var(--yellow)' : 'var(--green)' }}>
-                      [{new Date(e.ts).toLocaleTimeString()}] node_complete → <strong>{e.node}</strong>
-                    </div>
-                  ))
-              }
-            </div>
-          </div>
+          {/* Live CLI-style console — every agent, gate, LLM call, deploy step */}
+          <CliConsole
+            events={sseLog}
+            pipelineId={pipelineId}
+            pipelineStatus={pipelineStatus}
+          />
         </div>
       </div>
 
